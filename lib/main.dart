@@ -481,7 +481,7 @@ class _ExcelProcessorState extends State<ExcelProcessor> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Excel Processor'),
+        title: Text('OBAP Excel Processor'),
       ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
