@@ -1,8 +1,8 @@
-import 'dart:developer';
+import 'dart:html' as html;
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:excel/excel.dart';
-import 'dart:io';
 
 void main() {
   runApp(MyApp());
@@ -17,7 +17,6 @@ class MyApp extends StatelessWidget {
   }
 }
 
-// Obtenir la clé à partir de la colonne
 String getKeyFromColumn(int col, int row) {
   switch (col) {
     case 2:
@@ -246,7 +245,7 @@ class ExcelProcessor extends StatefulWidget {
 }
 
 class _ExcelProcessorState extends State<ExcelProcessor> {
-  List<String?> _filePaths = [];
+  List<html.File> _files = [];
   int _year = 2023;
   String? _outputDirectory;
 
@@ -327,38 +326,27 @@ class _ExcelProcessorState extends State<ExcelProcessor> {
     });
   }
 
-  Future<void> _pickFiles() async {
-    FilePickerResult? result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['xlsx'],
-      allowMultiple: true,
-    );
-
-    if (result != null) {
-      setState(() {
-        _filePaths = result.paths;
-      });
-    }
-  }
-
-  Future<void> _pickOutputDirectory() async {
-    String? selectedDirectory = await FilePicker.platform.getDirectoryPath();
-
-    if (selectedDirectory != null) {
-      setState(() {
-        _outputDirectory = selectedDirectory;
-      });
-    }
+  void _pickFiles() async {
+    html.FileUploadInputElement uploadInput = html.FileUploadInputElement();
+    uploadInput.accept = '.xlsx';
+    uploadInput.multiple = true;
+    uploadInput.click();
+    uploadInput.onChange.listen((e) {
+      final files = uploadInput.files;
+      if (files != null) {
+        setState(() {
+          _files = files;
+        });
+      }
+    });
   }
 
   Future<void> _processFiles() async {
-    if (_filePaths.isEmpty || _outputDirectory == null) return;
+    if (_files.isEmpty) return;
 
-    // Créer un nouveau fichier Excel
     var newExcel = Excel.createExcel();
     var bddSheetNew = newExcel['BDD_rex_confidentiel'];
 
-    // Ajouter les en-têtes
     List<String> headers = [
       'AC',
       'Num contri',
@@ -395,18 +383,16 @@ class _ExcelProcessorState extends State<ExcelProcessor> {
     bddSheetNew
         .appendRow(headers.map((header) => TextCellValue(header)).toList());
 
-    for (String? filePath in _filePaths) {
-      if (filePath == null) continue;
-
-      var file = File(filePath);
-      var bytes = file.readAsBytesSync();
+    for (var file in _files) {
+      var reader = html.FileReader();
+      reader.readAsArrayBuffer(file);
+      await reader.onLoad.first;
+      var bytes = reader.result as Uint8List;
       var excel = Excel.decodeBytes(bytes);
 
-      // Lire les feuilles
       var withPi = excel[' Avec PI'];
       var withoutPi = excel['Sans PI'];
 
-      // Fonction pour extraire les données
       Map<String, String> extractData(Sheet sheet, List<List<int>> indices) {
         Map<String, String> data = {};
         indices.forEach((index) {
@@ -422,7 +408,6 @@ class _ExcelProcessorState extends State<ExcelProcessor> {
         return data;
       }
 
-      // Mapper et ajouter les données à la feuille
       void mapDataToRowAndAppend(Map<String, String> data, String typology,
           String apiSpi, String contriNum) {
         List<CellValue> row = [
@@ -462,9 +447,8 @@ class _ExcelProcessorState extends State<ExcelProcessor> {
         bddSheetNew.appendRow(row);
       }
 
-      // Traiter chaque typologie
       void processTypology(String typology) {
-        String contriNum = filePath.split('/').last.split('-').first;
+        String contriNum = file.name.split('-').first;
         rowIndexMap[typology]?.forEach((section, indices) {
           var data = extractData(withoutPi, indices);
           mapDataToRowAndAppend(data, typology, 'SPI', contriNum);
@@ -478,14 +462,18 @@ class _ExcelProcessorState extends State<ExcelProcessor> {
       });
     }
 
-    // Sauvegarder les modifications dans un fichier Excel dans le répertoire choisi
-    String outputPath =
-        '$_outputDirectory/23-Fichier REX collecte controles 2023_updated.xlsx';
-    var outputFile = File(outputPath);
-    await outputFile.writeAsBytes(newExcel.encode()!);
+    var content = newExcel.encode()!;
+    final blob = html.Blob([content],
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    final url = html.Url.createObjectUrlFromBlob(blob);
+    final anchor = html.AnchorElement(href: url)
+      ..setAttribute(
+          'download', '23-Fichier REX collecte controles 2023_updated.xlsx')
+      ..click();
+    html.Url.revokeObjectUrl(url);
 
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Fichier traité et sauvegardé à $outputPath')),
+      SnackBar(content: Text('Fichier traité et sauvegardé.')),
     );
   }
 
@@ -503,8 +491,8 @@ class _ExcelProcessorState extends State<ExcelProcessor> {
               onPressed: _pickFiles,
               child: Text('Sélectionner des fichiers Excel'),
             ),
-            if (_filePaths.isNotEmpty)
-              Text("${_filePaths.length} fichiers sélectionnés"),
+            if (_files.isNotEmpty)
+              Text("${_files.length} fichiers sélectionnés"),
             TextField(
               decoration: InputDecoration(labelText: 'Année de collecte'),
               keyboardType: TextInputType.number,
@@ -516,17 +504,7 @@ class _ExcelProcessorState extends State<ExcelProcessor> {
             ),
             SizedBox(height: 20),
             ElevatedButton(
-              onPressed: () async {
-                await _pickOutputDirectory();
-                if (_outputDirectory != null) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                        content: Text(
-                            'Répertoire de sortie sélectionné: $_outputDirectory')),
-                  );
-                  _processFiles();
-                }
-              },
+              onPressed: _processFiles,
               child: Text('Traiter les fichiers'),
             ),
           ],
